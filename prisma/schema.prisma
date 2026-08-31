@@ -1,0 +1,209 @@
+// Időpontfoglaló — adatmodell
+// Docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Auth.js (NextAuth v5) modellek
+// ---------------------------------------------------------------------------
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+
+  accounts Account[]
+  sessions Session[]
+
+  ownedEventTypes EventType[]       @relation("EventTypeOwner")
+  memberships     EventTypeMember[]
+
+  createdAt DateTime @default(now())
+}
+
+model Account {
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  sessionToken String   @id
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@id([identifier, token])
+}
+
+// ---------------------------------------------------------------------------
+// Domain
+// ---------------------------------------------------------------------------
+
+enum MemberRole {
+  OWNER
+  COHOST
+}
+
+enum LimitPeriod {
+  DAY
+  WEEK
+  MONTH
+}
+
+enum BookingStatus {
+  CONFIRMED
+  CANCELLED
+}
+
+/// Egy foglalható eseménytípus (pl. "45 perces konzultáció").
+model EventType {
+  id           String  @id @default(cuid())
+  slug         String  @unique
+  title        String
+  description  String?
+  locationNote String?
+
+  ownerId String
+  owner   User   @relation("EventTypeOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  /// A megbeszélés hossza percben (30 / 45 / 60 / egyedi).
+  durationMin Int @default(30)
+
+  /// Ennyi perccel a foglalás előtt/után nem lehet másik foglalás.
+  bufferBeforeMin Int @default(0)
+  bufferAfterMin  Int @default(0)
+
+  /// Ennél közelebbi időpontra nem lehet foglalni (percben).
+  minimumNoticeMin Int @default(0)
+
+  /// Foglalási gyakoriság korlátozása. null => nincs korlát.
+  frequencyLimitCount  Int?
+  frequencyLimitPeriod LimitPeriod?
+
+  /// A generált időpontok lépésköze. null => hossz + pufferek.
+  slotIntervalMin Int?
+
+  /// Emlékeztető e-mail ennyi órával az esemény előtt. null => nincs.
+  reminderHoursBefore Int? @default(24)
+
+  isActive Boolean @default(true)
+  timezone String  @default("Europe/Budapest")
+
+  windows  AvailabilityWindow[]
+  bookings Booking[]
+  members  EventTypeMember[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([ownerId])
+}
+
+/// Társszervező. A meghívás e-mail cím alapján történik; a userId a
+/// bejelentkezéskor kerül összekötésre.
+model EventTypeMember {
+  id String @id @default(cuid())
+
+  eventTypeId String
+  eventType   EventType @relation(fields: [eventTypeId], references: [id], onDelete: Cascade)
+
+  /// Csak elfogadott meghívónál van kitöltve.
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Kisbetűsítve tárolva, hogy a meghívó egyértelműen párosítható legyen.
+  invitedEmail String
+  role         MemberRole @default(COHOST)
+
+  invitedById String?
+  acceptedAt  DateTime?
+  createdAt   DateTime   @default(now())
+
+  @@unique([eventTypeId, invitedEmail])
+  @@index([invitedEmail])
+  @@index([userId])
+}
+
+/// Dátumhoz kötött elérhetőségi sáv. Helyi idő szerint tárolva (lásd
+/// EventType.timezone), hogy a nyári időszámítás váltása se csússzon el.
+model AvailabilityWindow {
+  id String @id @default(cuid())
+
+  eventTypeId String
+  eventType   EventType @relation(fields: [eventTypeId], references: [id], onDelete: Cascade)
+
+  /// A naptári nap (idő nélkül).
+  date DateTime @db.Date
+
+  /// Percek a helyi éjféltől. 0 <= startMin < endMin <= 1440
+  startMin Int
+  endMin   Int
+
+  createdAt DateTime @default(now())
+
+  @@index([eventTypeId, date])
+}
+
+model Booking {
+  id String @id @default(cuid())
+
+  eventTypeId String
+  eventType   EventType @relation(fields: [eventTypeId], references: [id], onDelete: Cascade)
+
+  startsAt DateTime @db.Timestamptz(3)
+  endsAt   DateTime @db.Timestamptz(3)
+
+  /// Dupla foglalás elleni védelem: CONFIRMED állapotban megegyezik a
+  /// startsAt értékével, lemondáskor null lesz. Postgresben a NULL értékek
+  /// nem ütköznek egyedi indexben, így a lemondott időpont újra foglalható.
+  activeAt DateTime? @db.Timestamptz(3)
+
+  guestName  String
+  guestEmail String
+  guestNote  String?
+
+  status      BookingStatus @default(CONFIRMED)
+  manageToken String        @unique
+
+  reminderSentAt DateTime?
+  cancelledAt    DateTime?
+  cancelReason   String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([eventTypeId, activeAt])
+  @@index([eventTypeId, startsAt])
+  @@index([startsAt])
+}
