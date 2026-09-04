@@ -190,3 +190,5 @@ src/app/api/cron/             emlékeztetők ütemezett kiküldése
   menthetők.
 - A nyilvános foglalási végpontnak nincs sebességkorlátja; nyilvános
   üzemeltetés előtt érdemes hozzátenni.
+
+Hó!
