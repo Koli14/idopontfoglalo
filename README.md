@@ -157,15 +157,23 @@ igazolt, ezért a párosítás biztonságos.
 2. **Környezeti változók** (Project Settings → Environment Variables): a
    `.env.example` összes kulcsa. A `NEXT_PUBLIC_APP_URL` az éles domain legyen,
    mert a foglalási linkek és a levelek ebből épülnek.
-3. **Migrációk.** Állítsd a Build Commandot erre:
-   ```
-   pnpm prisma migrate deploy && pnpm build
-   ```
+3. **Migrációk.** A `vercel.json` `buildCommand` mezője már tartalmazza a
+   `prisma migrate deploy` lépést, tehát minden telepítés alkalmazza a még
+   nem futtatott migrációkat. Ehhez a `DIRECT_URL`-nek elérhetőnek kell lennie
+   a build alatt.
 4. **Google OAuth.** Vedd fel az éles redirect URI-t (lásd fentebb).
-5. **Cron.** A `vercel.json` óránként hívja a `/api/cron/emlekeztetok`
-   végpontot. A `CRON_SECRET` beállításakor a Vercel automatikusan küldi az
-   `Authorization: Bearer` fejlécet; enélkül a végpont bárki által hívható,
-   ezért éles környezetben mindig állítsd be.
+5. **Cron.** A `vercel.json` naponta egyszer (06:00 UTC) hívja a
+   `/api/cron/emlekeztetok` végpontot — a Vercel **Hobby csomagja csak napi
+   ütemezést enged**. A `CRON_SECRET` beállításakor a Vercel automatikusan
+   küldi az `Authorization: Bearer` fejlécet; enélkül a végpont bárki által
+   hívható, ezért éles környezetben mindig állítsd be.
+
+   A végpont minden emlékeztetőt kiküld, ami a _következő futásig_ esedékessé
+   válik — különben a ritka futás egyszerűen átugraná a rövid előretartású
+   emlékeztetőket. Emiatt egy emlékeztető legfeljebb egy futási közzel korábban
+   érkezhet a beállított időpontnál. Ha Pro csomagra váltasz és sűrűbb
+   ütemezést állítasz be, add meg a `CRON_INTERVAL_HOURS` változót is (pl. `1`
+   óránkénti futásnál), hogy az előretartás ehhez igazodjon.
 
 ## Könyvtárszerkezet
 

@@ -5,7 +5,24 @@ import { sendBookingReminder } from '@/lib/notifications'
 const MAX_REMINDER_HOURS = 24 * 14
 
 /**
- * Emlékeztető e-mailek kiküldése. A Vercel Cron óránként hívja.
+ * Milyen sűrűn fut ez a végpont (órában). A Vercel Hobby csomagján a cron
+ * naponta egyszer indulhat, ezért az alapérték 24. Ha Pro csomagra váltasz és
+ * sűrűbb ütemezést állítasz be a `vercel.json`-ban, állítsd át ezt a
+ * környezeti változót is — ebből számoljuk, meddig kell előre néznünk.
+ */
+const CRON_INTERVAL_HOURS = Number(process.env.CRON_INTERVAL_HOURS ?? 24)
+
+const HOUR_MS = 60 * 60 * 1000
+
+/**
+ * Emlékeztető e-mailek kiküldése. A Vercel Cron hívja (lásd `vercel.json`).
+ *
+ * **Miért nézünk előre?** Ha csak a már esedékes emlékeztetőket küldenénk ki,
+ * a ritkán futó cron egyszerűen átugraná őket: egy „1 órával előtte"
+ * emlékeztető sosem lenne esedékes pont akkor, amikor a napi futás történik,
+ * és mire legközelebb lefutna, az esemény már elmúlt. Ezért mindent kiküldünk,
+ * ami a *következő futásig* esedékessé válik. Így az emlékeztető inkább kicsit
+ * korábban megy ki, mint hogy egyáltalán ne menjen.
  *
  * A művelet idempotens: a `reminderSentAt` mezőt még a küldés előtt
  * lefoglaljuk egy feltételes írással, így két egyszerre futó cron sem tud
@@ -23,7 +40,11 @@ export async function GET(request: Request) {
   }
 
   const now = new Date()
-  const horizon = new Date(now.getTime() + MAX_REMINDER_HOURS * 60 * 60 * 1000)
+  const lookaheadMs = Math.max(0, CRON_INTERVAL_HOURS) * HOUR_MS
+  // A jelöltek közé az is beleférhet, ami csak a következő futásig válik
+  // esedékessé, ezért a leghosszabb előretartáson felül a futási közt is
+  // hozzáadjuk.
+  const horizon = new Date(now.getTime() + MAX_REMINDER_HOURS * HOUR_MS + lookaheadMs)
 
   const candidates = await prisma.booking.findMany({
     where: {
@@ -41,12 +62,14 @@ export async function GET(request: Request) {
     take: 200,
   })
 
-  // Az "ennyi órával előtte" küszöb eseményenként más, ezért itt szűrünk.
+  // Az „ennyi órával előtte" küszöb eseményenként más, ezért itt szűrünk.
   const due = candidates.filter((booking) => {
     const hours = booking.eventType.reminderHoursBefore
     if (hours === null) return false
 
-    return booking.startsAt.getTime() - hours * 60 * 60 * 1000 <= now.getTime()
+    const dueAt = booking.startsAt.getTime() - hours * HOUR_MS
+
+    return dueAt <= now.getTime() + lookaheadMs
   })
 
   let sent = 0
@@ -70,5 +93,11 @@ export async function GET(request: Request) {
     }
   }
 
-  return Response.json({ checked: candidates.length, due: due.length, sent, failed })
+  return Response.json({
+    checked: candidates.length,
+    due: due.length,
+    sent,
+    failed,
+    lookaheadHours: CRON_INTERVAL_HOURS,
+  })
 }
