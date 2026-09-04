@@ -50,3 +50,4 @@ next-env.d.ts
 
 # other editors' skill symlinks (the real files live in .agents/)
 .windsurf/
+.env*.local
